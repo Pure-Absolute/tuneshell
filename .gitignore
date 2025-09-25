@@ -1,0 +1,16 @@
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+
+# System files
+.DS_Store
+Thumbs.db
+
+#priate files
+playlists/
