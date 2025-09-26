@@ -1,0 +1,2 @@
+The UI is boring. Add the themes feature and restructure ui.py so it can apply different themes. themes saved in themes folder
+the default themes
