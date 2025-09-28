@@ -1,0 +1,26 @@
+{
+  "colors": {
+    "border": { "fg": 3, "bg": 0 },
+    "symbol": { "fg": 6, "bg": 0 },
+    "timer": { "fg": 7, "bg": 0 },
+    "progress": { "fg": 2, "bg": 0 },
+    "menu": { "fg": 4, "bg": 0 }
+  },
+  "symbols": {
+    "play": "▶",
+    "pause": "⏸",
+    "autosave": "⏷",
+    "repeat_one": "🔂",
+    "repeat_queue": "🔁",
+    "next": "⏭️"
+  },
+  "progress": {
+    "width": 32,
+    "fill": "█",
+    "empty": "░"
+  ],
+  "digital": {
+    "width": 6,
+    "height": 8
+  }
+}
