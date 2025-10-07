@@ -1,7 +1,7 @@
 ## Welcome to tuneshell
 **A music player** ncurses based written in python that fully works in terminal.
 
-#NOTES:
+# NOTES:
 This project is still in development, so expect bugs and missing features. If you find any issues, please report them on the [GitHub issues page]
 
 tuneshell using ncurses to handle the UI, [yt-dlp](https://github.com/yt-dlp/yt-dlp) to extract audio from YouTube and using mpv subprocess to process the audio
