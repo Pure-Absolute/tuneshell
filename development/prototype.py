@@ -1,34 +1,93 @@
+import os
 import vlc
 import yt_dlp
 import threading
 import time
 import queue
+import requests
+from dotenv import load_dotenv
 
+ENV_FILE = ".env"
+
+# --- ENV KEY HANDLING ---
+def get_api_key():
+    load_dotenv(ENV_FILE)
+    key = os.getenv("YOUTUBE_API_KEY")
+
+    if key:
+        return key
+
+    print("⚠ No YouTube Data API key found.")
+    key = input("Enter your YouTube Data API key: ").strip()
+    if key:
+        with open(ENV_FILE, "a") as f:
+            f.write(f"\nYOUTUBE_API_KEY={key}\n")
+        print("✅ API key saved to .env")
+    return key
+
+
+# --- FETCH RECOMMENDATIONS (API) ---
+def fetch_related_videos_api(video_id, max_results=5, api_key=None):
+    """Fetch related videos using YouTube Data API v3."""
+    if not api_key:
+        print("⚠ No API key provided for autofill.")
+        return []
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "type": "video",
+        "relatedToVideoId": video_id,
+        "maxResults": max_results,
+        "key": api_key
+    }
+
+    try:
+        resp = requests.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        results = []
+        for item in data.get("items", []):
+            vid = item["id"]["videoId"]
+            title = item["snippet"]["title"]
+            results.append({"id": vid, "title": title})
+        return results
+    except requests.exceptions.HTTPError as e:
+        print(f"⚠ Error fetching recommendations: {e.response.text}")
+    except Exception as e:
+        print(f"⚠ Unexpected error: {e}")
+    return []
+
+
+# --- YT-DLP SETTINGS ---
 SEARCH_OPTS = {
-    'quiet': True,
-    'skip_download': True,
-    'extract_flat': 'in_playlist',
-    'default_search': 'ytsearch'
+    "quiet": True,
+    "skip_download": True,
+    "extract_flat": "in_playlist",
+    "default_search": "ytsearch"
 }
 
 INFO_OPTS = {
-    'quiet': True,
-    'skip_download': True,
-    'format': 'bestaudio/best'
+    "quiet": True,
+    "skip_download": True,
+    "format": "bestaudio/best"
 }
 
+
+# --- MAIN PLAYER CLASS ---
 class YouTubePlayer:
-    def __init__(self, autofill=0):
+    def __init__(self, autofill=0, api_key=None):
         self.q = queue.Queue()
         self.autofill = autofill
         self.player = None
         self.current_video = None
         self.playing = False
+        self.api_key = api_key
 
     def search(self, query, max_results=5):
         with yt_dlp.YoutubeDL(SEARCH_OPTS) as ydl:
             info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
-            return info['entries']
+            return info["entries"]
 
     def add_to_queue(self, url, title=None):
         self.q.put((url, title))
@@ -36,7 +95,7 @@ class YouTubePlayer:
     def get_audio_url(self, url):
         with yt_dlp.YoutubeDL(INFO_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
-            return info['url'], info
+            return info["url"], info
 
     def play_next(self):
         if self.q.empty():
@@ -65,8 +124,7 @@ class YouTubePlayer:
 
     def _monitor(self):
         while self.playing:
-            state = self.player.get_state()
-            if state == vlc.State.Ended:
+            if self.player.get_state() == vlc.State.Ended:
                 self.playing = False
                 print("Song ended.")
                 self.play_next()
@@ -74,21 +132,23 @@ class YouTubePlayer:
             time.sleep(1)
 
     def fetch_recommendations(self):
-        """Fetch related videos of last played"""
-        last_url = f"https://www.youtube.com/watch?v={self.current_video['id']}"
-        with yt_dlp.YoutubeDL(INFO_OPTS) as ydl:
-            info = ydl.extract_info(last_url, download=False)
-            recs = info.get('related_videos', [])
-            if not recs:
-                print("⚠ No recommendations found.")
-                return
-            for r in recs[:self.autofill]:
-                vid_id = r.get('id')
-                if vid_id:
-                    vid_url = f"https://www.youtube.com/watch?v={vid_id}"
-                    title = r.get('title')
-                    print(f" + Autofill added: {title}")
-                    self.q.put((vid_url, title))
+        """Fetch related videos using YouTube Data API."""
+        last_id = self.current_video.get("id")
+        if not last_id:
+            print("⚠ No video ID available for autofill.")
+            return
+
+        print(f"Fetching {self.autofill} recommendations via YouTube API...")
+        recs = fetch_related_videos_api(last_id, max_results=self.autofill, api_key=self.api_key)
+        if not recs:
+            print("⚠ No recommendations found (API returned none).")
+            return
+
+        for r in recs:
+            vid_url = f"https://www.youtube.com/watch?v={r['id']}"
+            title = r["title"]
+            print(f" + Autofill added: {title}")
+            self.q.put((vid_url, title))
 
     def pause(self):
         if self.player:
@@ -117,7 +177,8 @@ class YouTubePlayer:
 
 # --- CLI ---
 if __name__ == "__main__":
-    player = YouTubePlayer(autofill=5)
+    api_key = get_api_key()
+    player = YouTubePlayer(autofill=5, api_key=api_key)
 
     print("Commands: search <query>, play, pause, skip, queue, autofill <n>, exit")
     while True:
@@ -132,8 +193,8 @@ if __name__ == "__main__":
             for c in choice:
                 if c.isdigit():
                     idx = int(c)
-                    url = results[idx]['url']
-                    title = results[idx]['title']
+                    url = results[idx]["url"]
+                    title = results[idx]["title"]
                     player.add_to_queue(url, title)
                     print(f" + Added: {title}")
 
@@ -163,3 +224,4 @@ if __name__ == "__main__":
 
         else:
             print("Unknown command.")
+
