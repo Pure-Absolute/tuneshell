@@ -4,19 +4,21 @@ import yt_dlp
 import threading
 import time
 import queue
+import random
 import requests
 from dotenv import load_dotenv
 
 ENV_FILE = ".env"
+CACHE_DIR = "cache"
 
-# --- ENV KEY HANDLING ---
+if not os.path.exists(CACHE_DIR):
+    os.makedirs(CACHE_DIR)
+
 def get_api_key():
     load_dotenv(ENV_FILE)
     key = os.getenv("YOUTUBE_API_KEY")
-
     if key:
         return key
-
     print("⚠ No YouTube Data API key found.")
     key = input("Enter your YouTube Data API key: ").strip()
     if key:
@@ -25,41 +27,6 @@ def get_api_key():
         print("✅ API key saved to .env")
     return key
 
-
-# --- FETCH RECOMMENDATIONS (API) ---
-def fetch_related_videos_api(video_id, max_results=5, api_key=None):
-    """Fetch related videos using YouTube Data API v3."""
-    if not api_key:
-        print("⚠ No API key provided for autofill.")
-        return []
-
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "type": "video",
-        "relatedToVideoId": video_id,
-        "maxResults": max_results,
-        "key": api_key
-    }
-
-    try:
-        resp = requests.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        results = []
-        for item in data.get("items", []):
-            vid = item["id"]["videoId"]
-            title = item["snippet"]["title"]
-            results.append({"id": vid, "title": title})
-        return results
-    except requests.exceptions.HTTPError as e:
-        print(f"⚠ Error fetching recommendations: {e.response.text}")
-    except Exception as e:
-        print(f"⚠ Unexpected error: {e}")
-    return []
-
-
-# --- YT-DLP SETTINGS ---
 SEARCH_OPTS = {
     "quiet": True,
     "skip_download": True,
@@ -73,16 +40,17 @@ INFO_OPTS = {
     "format": "bestaudio/best"
 }
 
-
-# --- MAIN PLAYER CLASS ---
 class YouTubePlayer:
     def __init__(self, autofill=0, api_key=None):
-        self.q = queue.Queue()
+        self.q = []
+        self.played = []
         self.autofill = autofill
         self.player = None
         self.current_video = None
         self.playing = False
         self.api_key = api_key
+        self.mode = "normal"  # normal | repeat | repeatone | shuffle
+        self.cache = {}
 
     def search(self, query, max_results=5):
         with yt_dlp.YoutubeDL(SEARCH_OPTS) as ydl:
@@ -90,27 +58,33 @@ class YouTubePlayer:
             return info["entries"]
 
     def add_to_queue(self, url, title=None):
-        self.q.put((url, title))
+        self.q.append((url, title))
 
     def get_audio_url(self, url):
+        if url in self.cache:
+            return self.cache[url]
         with yt_dlp.YoutubeDL(INFO_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
-            return info["url"], info
+            stream_url = info["url"]
+            self.cache[url] = (stream_url, info)
+            return stream_url, info
 
-    def play_next(self):
-        if self.q.empty():
-            if self.autofill > 0 and self.current_video:
-                self.fetch_recommendations()
-                if self.q.empty():
-                    print("Queue empty. Stopping.")
-                    return
+    def play(self, index=None):
+        if index is not None:
+            if 0 <= index < len(self.q):
+                url, title = self.q.pop(index)
             else:
-                print("Queue empty. Stopping.")
+                print("Invalid index.")
                 return
+        elif not self.q:
+            print("Queue empty.")
+            return
+        else:
+            url, title = self.q.pop(0)
 
-        url, title = self.q.get()
         stream_url, info = self.get_audio_url(url)
         self.current_video = info
+        self.played.append((url, info['title']))
         print(f"▶ Playing: {info['title']}")
 
         if self.player:
@@ -127,28 +101,25 @@ class YouTubePlayer:
             if self.player.get_state() == vlc.State.Ended:
                 self.playing = False
                 print("Song ended.")
-                self.play_next()
+                self.next()
                 break
             time.sleep(1)
 
-    def fetch_recommendations(self):
-        """Fetch related videos using YouTube Data API."""
-        last_id = self.current_video.get("id")
-        if not last_id:
-            print("⚠ No video ID available for autofill.")
-            return
-
-        print(f"Fetching {self.autofill} recommendations via YouTube API...")
-        recs = fetch_related_videos_api(last_id, max_results=self.autofill, api_key=self.api_key)
-        if not recs:
-            print("⚠ No recommendations found (API returned none).")
-            return
-
-        for r in recs:
-            vid_url = f"https://www.youtube.com/watch?v={r['id']}"
-            title = r["title"]
-            print(f" + Autofill added: {title}")
-            self.q.put((vid_url, title))
+    def next(self):
+        if self.mode == "repeatone" and self.current_video:
+            url = self.current_video.get("webpage_url")
+            title = self.current_video.get("title")
+            self.q.insert(0, (url, title))
+        elif self.mode == "repeat" and self.current_video:
+            url = self.current_video.get("webpage_url")
+            title = self.current_video.get("title")
+            self.q.append((url, title))
+        elif self.mode == "shuffle" and self.q:
+            random.shuffle(self.q)
+        if self.q:
+            self.play()
+        else:
+            print("Queue empty. Stopping.")
 
     def pause(self):
         if self.player:
@@ -159,33 +130,38 @@ class YouTubePlayer:
                 self.player.play()
                 print("▶ Resumed")
 
-    def skip(self):
-        if self.player:
-            print("⏭ Skipped")
-            self.player.stop()
-            self.play_next()
-
     def show_queue(self):
-        if self.q.empty():
+        if not self.q and not self.played:
             print("Queue is empty.")
-        else:
-            print("Queue:")
-            temp = list(self.q.queue)
-            for i, (_, title) in enumerate(temp):
-                print(f" {i+1}. {title}")
+            return
+        print("\n--- Queue ---")
+        for i, (_, title) in enumerate(self.q):
+            print(f" {i}. {title}")
+        if self.played:
+            print("\n--- Played ---")
+            for i, (_, title) in enumerate(self.played[-5:]):
+                print(f" ✓ {title}")
 
+    def toggle_mode(self, mode):
+        self.mode = mode
+        print(f"Mode set to: {mode}")
 
-# --- CLI ---
 if __name__ == "__main__":
     api_key = get_api_key()
     player = YouTubePlayer(autofill=5, api_key=api_key)
 
-    print("Commands: search <query>, play, pause, skip, queue, autofill <n>, exit")
-    while True:
-        cmd = input(">>> ").strip()
+    print("Commands: s <query>, add <url>, p [n], pa, n, q, r, r1, sh, exit")
 
-        if cmd.startswith("search "):
-            query = cmd[len("search "):]
+    while True:
+        cmd = input(">>> ").strip().split()
+        if not cmd:
+            continue
+
+        main = cmd[0]
+        args = cmd[1:]
+
+        if main == "s":
+            query = " ".join(args)
             results = player.search(query)
             for i, r in enumerate(results):
                 print(f"[{i}] {r['title']}")
@@ -198,27 +174,34 @@ if __name__ == "__main__":
                     player.add_to_queue(url, title)
                     print(f" + Added: {title}")
 
-        elif cmd == "play":
-            player.play_next()
+        elif main == "add" and args:
+            url = args[0]
+            player.add_to_queue(url, url)
+            print(f" + Added link: {url}")
 
-        elif cmd == "pause":
+        elif main == "p":
+            idx = int(args[0]) if args else None
+            player.play(idx)
+
+        elif main == "pa":
             player.pause()
 
-        elif cmd == "skip":
-            player.skip()
+        elif main == "n":
+            player.next()
 
-        elif cmd == "queue":
+        elif main == "q":
             player.show_queue()
 
-        elif cmd.startswith("autofill "):
-            try:
-                n = int(cmd.split()[1])
-                player.autofill = n
-                print(f"Autofill set to {n}")
-            except:
-                print("Invalid number.")
+        elif main == "r":
+            player.toggle_mode("repeat")
 
-        elif cmd == "exit":
+        elif main == "r1":
+            player.toggle_mode("repeatone")
+
+        elif main == "sh":
+            player.toggle_mode("shuffle")
+
+        elif main == "exit":
             print("Bye!")
             break
 

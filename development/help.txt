@@ -1,0 +1,10 @@
+add <url>      → add YouTube link
+s <query>      → search
+p [n]          → play next or play queue index n
+pa             → pause/resume
+n              → skip
+r              → toggle repeat
+r1             → toggle repeat one
+sh             → toggle shuffle
+q              → show queue
+exit           → quit
