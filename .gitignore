@@ -1,0 +1,24 @@
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+*.env
+*.venv
+
+# System files
+.DS_Store
+Thumbs.db
+
+#priate files
+playlists/
+files.zip
+*.json
+
+#etc
+downloads/
+*.patch
